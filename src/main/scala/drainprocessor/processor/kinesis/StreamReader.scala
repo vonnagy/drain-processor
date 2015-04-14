@@ -122,7 +122,6 @@ class StreamReader(name: String, drainer: ActorRef)(implicit context: ActorConte
           log.trace(s"Sequence number: ${record.getSequenceNumber}")
           log.trace(s"Partition key: ${record.getPartitionKey}")
           receivedCount.incr
-
           drainer ! ConsistentHashableEnvelope(message = record, hashKey = record.getPartitionKey)
 
         } catch {

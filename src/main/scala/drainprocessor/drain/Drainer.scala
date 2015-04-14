@@ -27,11 +27,19 @@ class Drainer extends Actor with ActorLoggingAdapter with RequestBuilding {
 
   val drainProvider = new DrainProvider()(context.system)
   val droppedRecords = Counter(s"drainers.no-drain")(context.system)
-  var receivedCount: Option[Counter] = None
-  var pumpCount: Option[Counter] = None
-  var scheduledTimeout: Option[Cancellable] = None
-  var bundle = Seq[String]()
-  var appId: Option[String] = None
+
+  var appMap = Map[String, AppData]()
+
+  class AppData(appId: String) {
+    import context.system
+    val id = appId
+    val receivedCount = Counter(s"drainers.${appId.replace(".", "-")}.receive")
+    val pumpCount = Counter(s"drainers.${appId.replace(".", "-")}.pump")
+    var scheduledTimeout: Option[Cancellable] = None
+    var bundle = Seq[String]()
+  }
+
+  case class Timeout(appId: String)
 
   val clientPipeline = sendReceive
 
@@ -51,61 +59,61 @@ class Drainer extends Actor with ActorLoggingAdapter with RequestBuilding {
   def receive = {
     case r: Record =>
       val appId = r.getPartitionKey
-      if (this.appId.isEmpty)
-        this.appId = Some(appId)
-
       drainProvider.getDrains(appId).size match {
         case 0 => droppedRecords.incr
         case _ => processRecord(r)
       }
 
-    case "timeout" =>
-      pumpDrains(bundle)
+    case Timeout(appId) =>
+      pumpDrains(appMap.get(appId).get)
   }
 
   def processRecord(rec: Record): Unit = {
 
-    if (receivedCount.isEmpty) {
-      import context.system
-      receivedCount = Some(Counter(s"drainers.${appId.get.replace(".", "-")}.receive"))
-      pumpCount = Some(Counter(s"drainers.${appId.get.replace(".", "-")}.pump"))
+    val app = appMap.get(rec.getPartitionKey) match {
+      case None => new AppData(rec.getPartitionKey)
+      case a => a.get
     }
-   
-    receivedCount.get.incr
+
+    app.receivedCount.incr
     val line = new String(rec.getData.array());
 
-    bundle = bundle ++ Seq(line)
-    if (bundle.size == maxBundleSize) {
-      pumpDrains(bundle)
+    app.bundle = app.bundle :+ line
+    appMap = appMap.updated(app.id, app)
+
+    if (app.bundle.size == maxBundleSize) {
+      pumpDrains(app)
     }
-    else if (scheduledTimeout.isEmpty) {
-      context.system.scheduler.scheduleOnce(Duration(bundleTimeout, TimeUnit.MILLISECONDS), self, "timeout")
+    else if (app.scheduledTimeout.isEmpty) {
+      app.scheduledTimeout = Some(context.system.scheduler.scheduleOnce(Duration(bundleTimeout, TimeUnit.MILLISECONDS), self, Timeout(rec.getPartitionKey)))
+      appMap = appMap.updated(app.id, app)
     }
   }
 
-  def pumpDrains(data: Seq[String]): Unit = {
+  def pumpDrains(app: AppData): Unit = {
 
-    drainProvider.getDrains(appId.get) foreach { drain =>
+    drainProvider.getDrains(app.id) foreach { drain =>
       val url = drain.endpoint
 
       // Send to drain
       val startTimestamp = System.currentTimeMillis()
       val response = clientPipeline {
-        Post(url.toString).withHeaders(RawHeader(`Logplex-Msg-Count`, data.size.toString),
+        Post(url.toString).withHeaders(RawHeader(`Logplex-Msg-Count`, app.bundle.size.toString),
           RawHeader(`Logplex-Drain-Token`, drain.drainId),
           RawHeader(`Logplex-Frame-Id`, UUID.randomUUID().toString),
-          HttpHeaders.`Content-Type`(`application/logplex-1`)).withEntity(HttpEntity(data.mkString("")))
+          HttpHeaders.`Content-Type`(`application/logplex-1`)).withEntity(HttpEntity(app.bundle.mkString("")))
       }
 
       response.onComplete { x =>
-        pumpCount.get.incr
-        log.info(s"Request to ${this.appId.get} completed in ${System.currentTimeMillis() - startTimestamp} millis.")
+        app.pumpCount.incr
+        log.info(s"Request to ${app.id} completed in ${System.currentTimeMillis() - startTimestamp} millis.")
       }
     }
 
-    if (scheduledTimeout.isDefined)
-      scheduledTimeout.get.cancel()
+    if (app.scheduledTimeout.isDefined)
+      app.scheduledTimeout.get.cancel()
 
-    bundle = Seq[String]()
+    app.bundle = Seq[String]()
+    appMap = appMap.updated(app.id, app)
   }
 }
