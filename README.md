@@ -3,7 +3,7 @@ drain-processor
 
 [![Build Status](https://travis-ci.org/vonnagy/drain-processor.png?branch=master)](https://travis-ci.org/vonnagy/drain-processor)
 
-This is a service that receives logs from Heroku drains and forwards them on to storage or processors. It is written in Scala, 
+This is a service that logs from a source (i.e. Kinesis) and processes them. It is written in Scala, 
 which can easily be deployed to Heroku.  
 
 This application support the [Getting Started with Scala on Heroku](https://devcenter.heroku.com/articles/getting-started-with-scala) article - check it out.
