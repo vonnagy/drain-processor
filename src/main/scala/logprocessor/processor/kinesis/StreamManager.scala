@@ -32,6 +32,8 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
   val accessKey = context.system.settings.config.getString("log.processors.kinesis.access-key")
   val accessSecret = context.system.settings.config.getString("log.processors.kinesis.access-secret")
   val initPos = context.system.settings.config.getString(s"log.processors.kinesis.streams.$name.initial-position")
+  val maxRecords = context.system.settings.config.getInt(s"log.processors.kinesis.streams.$name.max-records")
+
 
   var worker: Option[Worker] = None
 
@@ -52,9 +54,10 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
     log.info("Using workerId: " + workerId)
 
     val kinesisClientLibConfiguration = new KinesisClientLibConfiguration("drain-processor", name,
-      new CredentialsProvider(credentials), workerId).
-      withKinesisEndpoint(endpoint).
-      withInitialPositionInStream(InitialPositionInStream.valueOf(initPos))
+      new CredentialsProvider(credentials), workerId)
+      .withKinesisEndpoint(endpoint)
+      .withInitialPositionInStream(InitialPositionInStream.valueOf(initPos))
+      .withMaxRecords(maxRecords)
 
     log.info(s"Running: drain-processor.")
 
@@ -119,6 +122,9 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
           log.trace(s"Sequence number: ${record.getSequenceNumber}")
           log.trace(s"Partition key: ${record.getPartitionKey}")
           receivedCount.incr
+
+          // The partition key is the app id so we will now lookup the drains for this app
+
         } catch {
           case t: Throwable =>
             log.error(s"Caught throwable while processing record $record", t)
