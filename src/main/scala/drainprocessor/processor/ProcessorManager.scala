@@ -4,9 +4,12 @@ import java.util.concurrent.TimeoutException
 
 import akka.actor._
 import akka.pattern.ask
+import akka.routing.FromConfig
 import akka.util.Timeout
 import com.github.vonnagy.service.container.health.{HealthInfo, HealthState, RegisteredHealthCheckActor}
+import com.github.vonnagy.service.container.http.routing.RoutedService
 import com.github.vonnagy.service.container.log.ActorLoggingAdapter
+import drainprocessor.drain.Drainer
 
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
@@ -22,6 +25,8 @@ class ProcessorManager extends Actor with RegisteredHealthCheckActor with ActorL
 
   import SupervisorStrategy._
   import context.dispatcher
+
+  val drainers = context.actorOf(FromConfig.props(Props[Drainer]), "drainer")
 
   // TODO customize
   override val supervisorStrategy =
@@ -49,6 +54,13 @@ class ProcessorManager extends Actor with RegisteredHealthCheckActor with ActorL
   }
 
   /**
+   * Start the drainers
+   */
+  private def startDrainers: Unit = {
+
+  }
+
+  /**
    * Load the defined processors
    */
   private def startProcessors: Seq[ActorRef] = {
@@ -60,7 +72,8 @@ class ProcessorManager extends Actor with RegisteredHealthCheckActor with ActorL
           var config = master.getConfig(entry.getKey)
           var clazz = config.getString("class");
 
-          val processor = context.actorOf(Props(Class.forName(clazz)), entry.getKey.toLowerCase)
+          val processor = context.actorOf(Props(Class.forName(clazz), drainers), entry.getKey.toLowerCase)
+          //processor.asInstanceOf[Processor].setDrainer(drainers)
           Some(processor)
         }
         else {

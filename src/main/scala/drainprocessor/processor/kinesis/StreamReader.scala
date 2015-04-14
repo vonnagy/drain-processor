@@ -2,8 +2,10 @@ package drainprocessor.processor.kinesis
 
 import java.net.InetAddress
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
-import akka.actor.ActorContext
+import akka.actor.{ActorContext, ActorRef}
+import akka.routing.ConsistentHashingRouter.ConsistentHashableEnvelope
 import com.amazonaws.auth.AWSCredentials
 import com.amazonaws.services.kinesis.clientlibrary.exceptions.{InvalidStateException, ShutdownException, ThrottlingException}
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.{IRecordProcessor, IRecordProcessorCheckpointer, IRecordProcessorFactory}
@@ -20,7 +22,7 @@ import scala.util.control.Breaks
 /**
  * Created by ivannagy on 4/12/15.
  */
-class StreamManager(name: String)(implicit context: ActorContext) extends LoggingAdapter {
+class StreamReader(name: String, drainer: ActorRef)(implicit context: ActorContext) extends LoggingAdapter {
 
   import context.system
 
@@ -34,6 +36,9 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
   val initPos = context.system.settings.config.getString(s"log.processors.kinesis.streams.$name.initial-position")
   val maxRecords = context.system.settings.config.getInt(s"log.processors.kinesis.streams.$name.max-records")
 
+  val retries = context.system.settings.config.getInt("log.processors.kinesis.streams.checkpoint-retries")
+  val checkpointInterval = context.system.settings.config.getDuration("log.processors.kinesis.streams.checkpoint-interval", TimeUnit.MILLISECONDS)
+  val backoffTime = context.system.settings.config.getDuration("log.processors.kinesis.streams.backoff-time", TimeUnit.MILLISECONDS)
 
   var worker: Option[Worker] = None
 
@@ -93,11 +98,6 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
     private var kinesisShardId: String = _
     private var nextCheckpointTimeInMillis: Long = _
 
-    // Backoff and retry settings.
-    private val BACKOFF_TIME_IN_MILLIS = 3000L
-    private val NUM_RETRIES = 10
-    private val CHECKPOINT_INTERVAL_MILLIS = 1000L
-
     override def initialize(shardId: String) = {
       log.info("Initializing record processor for shard: " + shardId)
       this.kinesisShardId = shardId
@@ -112,7 +112,7 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
       if (System.currentTimeMillis() > nextCheckpointTimeInMillis) {
         checkpoint(checkpointer)
         nextCheckpointTimeInMillis =
-          System.currentTimeMillis + CHECKPOINT_INTERVAL_MILLIS
+          System.currentTimeMillis + checkpointInterval
       }
     }
 
@@ -123,7 +123,7 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
           log.trace(s"Partition key: ${record.getPartitionKey}")
           receivedCount.incr
 
-          // The partition key is the app id so we will now lookup the drains for this app
+          drainer ! ConsistentHashableEnvelope(message = record, hashKey = record.getPartitionKey)
 
         } catch {
           case t: Throwable =>
@@ -144,7 +144,7 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
     private def checkpoint(checkpointer: IRecordProcessorCheckpointer) = {
       log.info(s"Checkpointing shard $kinesisShardId")
       breakable {
-        for (i <- 0 to NUM_RETRIES - 1) {
+        for (i <- 0 to retries - 1) {
           try {
             checkpointer.checkpoint()
             break
@@ -152,20 +152,21 @@ class StreamManager(name: String)(implicit context: ActorContext) extends Loggin
             case se: ShutdownException =>
               log.info("Caught shutdown exception, skipping checkpoint.", se)
             case e: ThrottlingException =>
-              if (i >= (NUM_RETRIES - 1)) {
+              if (i >= (retries - 1)) {
                 log.info(s"Checkpoint failed after ${i + 1} attempts.", e)
               } else {
                 log.info(s"Transient issue when checkpointing - attempt ${i + 1} of "
-                  + NUM_RETRIES, e)
+                  + retries, e)
               }
             case e: InvalidStateException =>
               log.info("Cannot save checkpoint to the DynamoDB table used by " +
                 "the Amazon Kinesis Client Library.", e)
           }
-          Thread.sleep(BACKOFF_TIME_IN_MILLIS)
+          Thread.sleep(backoffTime)
         }
       }
     }
+
   }
 
 }

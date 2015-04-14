@@ -1,16 +1,14 @@
 package drainprocessor.processor.kinesis
 
-import java.util.concurrent.TimeUnit
-
+import akka.actor.ActorRef
 import com.github.vonnagy.service.container.health.{HealthInfo, HealthState}
 import drainprocessor.processor.{Processor, ProcessorReady}
 
 /**
  * Created by ivannagy on 4/10/15.
  */
-class KinesisProcessor extends Processor {
+class KinesisProcessor(drainer: ActorRef) extends Processor {
 
-  val timeout = context.system.settings.config.getDuration("log.processors.kinesis.timeout", TimeUnit.MILLISECONDS).toInt
   var connected = false
   lazy val streams = verifyStreams
 
@@ -46,10 +44,10 @@ class KinesisProcessor extends Processor {
   /**
    * Make sure the the proper streams are up and running before registering or accepting any log work
    */
-  def verifyStreams(): Map[String, StreamManager] = {
+  def verifyStreams(): Map[String, StreamReader] = {
 
     log.info("Locating the streams {} and {}", "log-stream")
-    Map(("log-stream", new StreamManager("log-stream")))
+    Map(("log-stream", new StreamReader("log-stream", drainer)))
 
   }
 

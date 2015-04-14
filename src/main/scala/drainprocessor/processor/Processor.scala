@@ -2,15 +2,16 @@ package drainprocessor.processor
 
 import java.nio.ByteBuffer
 
-import akka.actor.{Actor, ActorLogging}
+import akka.actor.{ActorRef, ActorSelection, Actor, ActorLogging}
 import com.github.vonnagy.service.container.health.HealthInfo
+import com.github.vonnagy.service.container.log.ActorLoggingAdapter
 import com.github.vonnagy.service.container.metrics.{Meter, Counter}
 
 /**
  * Derive any processors by applying this trait and then add it to log processors
  * in the configuraiton file
  */
-trait Processor extends Actor with ActorLogging {
+trait Processor extends Actor with ActorLoggingAdapter {
 
   import context.system
   def lineMetricPrefix: String
@@ -18,6 +19,7 @@ trait Processor extends Actor with ActorLogging {
   val lineReceivedMeter = Meter(s"$lineMetricPrefix.line.receive.meter")
 
   val appPattern = """\s(t\.[a-zA-Z0-9-]+)\s""".r
+  //var drainer : Option[ActorRef] = None
 
   override def preStart(): Unit = {
     log.info(s"${this.getClass.getName} starting at ${context.self.path}")
@@ -39,6 +41,10 @@ trait Processor extends Actor with ActorLogging {
     case CheckHealth => // How are we doing
       sender ! getHealth
   }
+
+//  def setDrainer(drainee: ActorRef) = {
+//    drainer = Some(drainee)
+//  }
 
   /** Must be implemented by an Actor. */
   def running: Receive
@@ -64,7 +70,7 @@ trait Processor extends Actor with ActorLogging {
             name.trim
 
           case None =>
-            log.warning(s"No application name found for log: $line")
+            log.warn(s"No application name found for log: $line")
             "unknown"
         }
 

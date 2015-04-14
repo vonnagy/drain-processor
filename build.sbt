@@ -17,6 +17,7 @@ libraryDependencies ++= Seq(
   "com.github.vonnagy"    % "service-container_2.10"  % "1.0.0",
   "com.amazonaws"         % "amazon-kinesis-client"   % "1.2.1",
   "io.github.cloudify"    %% "scalazon"               % "0.11",
+  "io.spray"              % "spray-client"            % SPRAY_VERSION,
   "com.typesafe.akka"     %% "akka-testkit"           % AKKA_VERSION    % "test",
   "io.spray"              % "spray-testkit"           % SPRAY_VERSION   % "test",
   "junit"                 % "junit"                   % "4.12"          % "test",
