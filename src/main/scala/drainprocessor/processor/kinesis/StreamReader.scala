@@ -14,7 +14,7 @@ import com.amazonaws.services.kinesis.clientlibrary.types.ShutdownReason
 import com.amazonaws.services.kinesis.metrics.impl.NullMetricsFactory
 import com.amazonaws.services.kinesis.model.Record
 import com.github.vonnagy.service.container.log.LoggingAdapter
-import com.github.vonnagy.service.container.metrics.Counter
+import com.github.vonnagy.service.container.metrics.{Meter, Counter}
 
 import scala.collection.JavaConversions._
 import scala.util.control.Breaks
@@ -49,6 +49,7 @@ class StreamReader(name: String, drainer: ActorRef)(implicit context: ActorConte
   }
 
   val receivedCount = Counter("processors.kinesis.receive")
+  val receivedMeter = Meter("processors.kinesis.receive.meter")
 
   /**
    * Never-ending processing loop over source stream.
@@ -121,8 +122,9 @@ class StreamReader(name: String, drainer: ActorRef)(implicit context: ActorConte
         try {
           log.trace(s"Sequence number: ${record.getSequenceNumber}")
           log.trace(s"Partition key: ${record.getPartitionKey}")
-          receivedCount.incr
           drainer ! ConsistentHashableEnvelope(message = record, hashKey = record.getPartitionKey)
+          receivedCount.incr
+          receivedMeter.mark
 
         } catch {
           case t: Throwable =>
